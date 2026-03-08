@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -107,6 +108,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def decompress_gzip_request(request: Request, call_next):
+    """Decompress gzip-encoded request bodies from the kserve agent sidecar."""
+    body = await request.body()
+    if len(body) >= 2 and body[0:2] == b'\x1f\x8b':
+        decompressed = gzip.decompress(body)
+        request._body = decompressed
+        logger.debug("Decompressed gzip request body (%d -> %d bytes)", len(body), len(decompressed))
+    return await call_next(request)
+
+
 # Include all routers
 app.include_router(
     consumer_router,
@@ -204,7 +217,7 @@ async def run_server() -> None:
 
     # Configure server settings
     host_https = "0.0.0.0"
-    host_http = "127.0.0.1"  # Keep loopback-only for security (kube-rbac-proxy forwards here)
+    host_http = "0.0.0.0"
     http_port = int(os.getenv("HTTP_PORT", "8080"))
     ssl_port = int(os.getenv("SSL_PORT", "4443"))
 
