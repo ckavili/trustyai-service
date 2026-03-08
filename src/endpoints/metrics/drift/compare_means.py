@@ -14,6 +14,7 @@ from src.core.metrics.drift.compare_means import (
 from src.service.data.shared_data_source import get_shared_data_source
 from src.service.payloads.metrics.base_metric_request import BaseMetricRequest
 from src.service.prometheus.shared_prometheus_scheduler import get_shared_prometheus_scheduler
+from src.service.prometheus.metric_value_carrier import MetricValueCarrier
 from src.service.utils.logging_utils import log_deprecated_endpoint
 
 router = APIRouter()
@@ -282,6 +283,68 @@ async def list_CompareMeans_requests() -> dict[str, list[dict[str, Any]]]:
     except Exception as e:
         logger.error(f"Error listing {METRIC_NAME} requests: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error listing requests: {str(e)}")
+
+
+async def calculate_comparemeans_metric(dataframe, request) -> MetricValueCarrier:
+    """
+    Calculate CompareMeans metric for the given dataframe and request.
+    This function is registered with the metrics directory and called by the scheduler.
+    The dataframe parameter is the current organic data batch from the scheduler.
+    Reference data is fetched from storage using the request's referenceTag.
+    """
+    data_source = get_data_source()
+
+    if not request.reference_tag:
+        raise ValueError("referenceTag is required for drift detection")
+
+    reference_df = await data_source.get_dataframe_by_tag(request.model_id, request.reference_tag)
+
+    if len(reference_df) == 0:
+        raise ValueError(f"No reference data found for model: {request.model_id} with tag: {request.reference_tag}")
+
+    if len(dataframe) == 0:
+        raise ValueError(f"No current data found for model: {request.model_id}")
+
+    fit_columns = request.fit_columns
+    if not fit_columns:
+        raise ValueError("fitColumns is required")
+
+    results = {}
+    for feature_name in fit_columns:
+        if feature_name not in reference_df.columns or feature_name not in dataframe.columns:
+            raise ValueError(f"Feature {feature_name} not found in data")
+
+        reference_data = reference_df[feature_name].to_numpy()
+        current_data = dataframe[feature_name].to_numpy()
+
+        results[feature_name] = CompareMeans.ttest_ind(
+            reference_data=reference_data,
+            current_data=current_data,
+            alpha=request.alpha,
+            equal_var=request.equal_var,
+            nan_policy=request.nan_policy,
+        )
+
+    # Return per-feature p-values as named values for subcategory labels
+    # This produces: trustyai_comparemeans{subcategory="danceability"} 0.45
+    named_values = {feature: result["p_value"] for feature, result in results.items()}
+
+    return MetricValueCarrier(named_values)
+
+
+def register_comparemeans_calculator():
+    """Register the CompareMeans calculator with the global metrics directory."""
+    scheduler = get_prometheus_scheduler()
+    if scheduler and scheduler.metrics_directory:
+        scheduler.metrics_directory.register(METRIC_NAME, calculate_comparemeans_metric)
+        logger.info("CompareMeans calculator registered with metrics directory")
+
+
+# Register on module import
+try:
+    register_comparemeans_calculator()
+except Exception as e:
+    logger.warning(f"Could not register CompareMeans calculator on import: {e}")
 
 
 # ============================================================================

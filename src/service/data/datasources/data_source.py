@@ -133,6 +133,27 @@ class DataSource:
             logger.error(f"Error creating dataframe for model={model_id}: {str(e)}")
             raise DataframeCreateException(f"Error creating dataframe for model={model_id}: {str(e)}")
 
+    async def get_dataframe_by_tag(self, model_id: str, tag: str) -> pd.DataFrame:
+        """
+        Get a dataframe filtered to only rows matching the given tag.
+
+        Args:
+            model_id: The model ID
+            tag: The tag to filter by (e.g. "TRAINING")
+
+        Returns:
+            A pandas DataFrame with only rows that have the specified tag
+        """
+        df = await self.get_dataframe(model_id)
+
+        if "tags" not in df.columns:
+            logger.warning(f"No 'tags' column found for model={model_id}")
+            return pd.DataFrame()
+
+        # Tags are stored as lists, check if the tag is in each row's tag list
+        mask = df["tags"].apply(lambda t: tag in t if isinstance(t, list) else str(t) == tag)
+        return df[mask].reset_index(drop=True)
+
     async def get_organic_dataframe(self, model_id: str, batch_size: int) -> pd.DataFrame:
         """
         Get a dataframe with only organic data (not synthetic).

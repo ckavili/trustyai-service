@@ -271,7 +271,10 @@ def process_payload(payload, get_data: Callable, enforced_first_shape: int = Non
         shape_tuples = []
         column_names = []
         for kserve_data in get_data(payload):
-            data.append(kserve_data.data)
+            # Flatten each tensor's data to 1D column values to avoid extra dimensions
+            # from reshaped data (e.g. shape [1,1] with data [[val]] → [val])
+            flat = np.array(kserve_data.data, dtype=object).flatten().tolist()
+            data.append(flat)
             shapes.add(tuple(kserve_data.shape))
             column_names.append(kserve_data.name)
             shape_tuples.append((kserve_data.name, kserve_data.shape))

@@ -97,9 +97,13 @@ class KServeData(BaseModel):
         actual = tuple(raw.shape)
         declared = tuple(self.shape)
         if declared != actual:
-            raise ValueError(
-                f"Declared shape {declared} does not match data shape {actual}"
-            )
+            if raw.size == np.prod(declared):
+                # Reshape data to match the declared shape, preserving row/column semantics
+                self.data = raw.reshape(declared).tolist()
+            else:
+                raise ValueError(
+                    f"Declared shape {declared} does not match data shape {actual}"
+                )
         return self
 
     @model_validator(mode="after")
